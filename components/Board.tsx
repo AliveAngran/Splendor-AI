@@ -132,6 +132,16 @@ const Board: React.FC<Props> = ({ state, onAction, disabled }) => {
                 ))}
             </div>
         </div>
+
+        {/* 跳过回合按钮 */}
+        {!disabled && (
+          <button
+            onClick={() => onAction({ type: 'PASS' })}
+            className="w-full py-3 border-2 border-gray-300 text-gray-500 font-bold uppercase tracking-wider hover:border-black hover:text-black transition-colors"
+          >
+            跳过回合
+          </button>
+        )}
       </div>
     </div>
   );

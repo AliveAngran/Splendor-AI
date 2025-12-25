@@ -97,22 +97,18 @@ export const executeAction = (state: GameState, action: Action): GameState => {
 
   if (action.type === 'TAKE_GEMS') {
     const { gems } = action;
-    // Rule: Take 3 different or 2 of same if count >= 4, or take fewer if bank is low
     const uniqueGems = new Set(gems);
     const isThreeDifferent = uniqueGems.size === 3 && gems.length === 3;
     const isTwoSame = gems.length === 2 && gems[0] === gems[1] && bank[gems[0]] >= 4;
-    // 允许拿少于3个不同的宝石（当银行不足时）
     const isFewerDifferent = uniqueGems.size === gems.length && gems.length > 0 && gems.length < 3;
 
     if (isThreeDifferent || isTwoSame || isFewerDifferent) {
-      // 计算当前玩家手中宝石总数
       const currentGemCount = Object.values(player.gems).reduce((sum, count) => sum + count, 0);
       const maxGems = 10;
       
       let actualTaken: GemType[] = [];
       let gemsToTake = gems.filter(g => bank[g] > 0);
       
-      // 限制拿取数量，确保不超过10个
       const canTake = Math.min(gemsToTake.length, maxGems - currentGemCount);
       gemsToTake = gemsToTake.slice(0, canTake);
       
@@ -131,7 +127,6 @@ export const executeAction = (state: GameState, action: Action): GameState => {
       }
     }
   } else if (action.type === 'BUY_CARD') {
-    // 先检查卡牌是否存在于场上或预留区
     const visibleCards = [...nextState.board.level1, ...nextState.board.level2, ...nextState.board.level3];
     let card: Card | undefined;
     
@@ -142,7 +137,6 @@ export const executeAction = (state: GameState, action: Action): GameState => {
     }
     
     if (card && canBuyCard(player, card)) {
-      // Logic for deducting costs
       for (const gem of [GemType.WHITE, GemType.BLUE, GemType.GREEN, GemType.RED, GemType.BLACK]) {
         const cost = card.cost[gem] || 0;
         const bonus = player.bonuses[gem] || 0;
@@ -162,7 +156,6 @@ export const executeAction = (state: GameState, action: Action): GameState => {
       player.score += card.points;
       player.bonuses[card.gemType] = (player.bonuses[card.gemType] || 0) + 1;
 
-      // Replace card on board from deck
       if (action.fromBoard) {
         const levelKey = `level${card.level}` as 'level1' | 'level2' | 'level3';
         const deckKey = `deck${card.level}` as 'deck1' | 'deck2' | 'deck3';
@@ -172,15 +165,12 @@ export const executeAction = (state: GameState, action: Action): GameState => {
         
         if (index !== -1) {
           if (deck.length > 0) {
-            // 从牌堆抽一张补充
             boardCards[index] = deck.shift()!;
           } else {
-            // 牌堆空了，移除该位置
             boardCards.splice(index, 1);
           }
         }
       } else {
-        // Bought from reserve
         player.reservedCards = player.reservedCards.filter(c => c.id !== card!.id);
       }
 
@@ -201,7 +191,6 @@ export const executeAction = (state: GameState, action: Action): GameState => {
     }
   } else if (action.type === 'RESERVE_CARD') {
     if (player.reservedCards.length < 3) {
-      // 检查卡牌是否在场上
       const levelKey = `level${action.level}` as 'level1' | 'level2' | 'level3';
       const boardCards = nextState.board[levelKey];
       const cardIndex = boardCards.findIndex(c => c.id === action.cardId);
@@ -210,17 +199,14 @@ export const executeAction = (state: GameState, action: Action): GameState => {
         const card = boardCards[cardIndex];
         player.reservedCards.push(card);
         
-        // 计算当前玩家手中宝石总数
         const currentGemCount = Object.values(player.gems).reduce((sum, count) => sum + count, 0);
         const maxGems = 10;
         
-        // 只有在未达上限且银行有黄金时才获得黄金
         if (bank.GOLD > 0 && currentGemCount < maxGems) {
           bank.GOLD--;
           player.gems.GOLD++;
         }
         
-        // Remove from board and replace from deck
         const deckKey = `deck${action.level}` as 'deck1' | 'deck2' | 'deck3';
         const deck = nextState.board[deckKey];
         
@@ -234,12 +220,14 @@ export const executeAction = (state: GameState, action: Action): GameState => {
         logMessage = `${player.name} 预留了一张卡牌。`;
       }
     }
+  } else if (action.type === 'PASS') {
+    valid = true;
+    logMessage = `${player.name} 跳过了本回合。`;
   }
 
   if (valid) {
     nextState.logs.unshift(logMessage);
     
-    // 切换到下一个玩家
     const nextPlayerIndex = (nextState.currentPlayerIndex + 1) % nextState.players.length;
     nextState.currentPlayerIndex = nextPlayerIndex;
     
@@ -247,14 +235,12 @@ export const executeAction = (state: GameState, action: Action): GameState => {
     if (nextPlayerIndex === 0) {
       const playersOver15 = nextState.players.filter(p => p.score >= 15);
       if (playersOver15.length > 0) {
-        // 找出分数最高的玩家
         const maxScore = Math.max(...nextState.players.map(p => p.score));
         const winners = nextState.players.filter(p => p.score === maxScore);
         
         if (winners.length === 1) {
           nextState.winner = winners[0].name;
         } else {
-          // 平分时，购买卡牌数少的获胜
           const minCards = Math.min(...winners.map(p => p.purchasedCards.length));
           const finalWinner = winners.find(p => p.purchasedCards.length === minCards);
           nextState.winner = finalWinner ? finalWinner.name : winners[0].name;

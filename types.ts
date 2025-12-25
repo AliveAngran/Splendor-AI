@@ -58,4 +58,5 @@ export interface GameState {
 export type Action = 
   | { type: 'TAKE_GEMS'; gems: GemType[] }
   | { type: 'BUY_CARD'; cardId: string; fromBoard: boolean; level?: number }
-  | { type: 'RESERVE_CARD'; cardId: string; level: number };
+  | { type: 'RESERVE_CARD'; cardId: string; level: number }
+  | { type: 'PASS' };
