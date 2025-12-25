@@ -156,14 +156,20 @@ const getValidActionsMask = (state: GameState): boolean[] => {
   const player = state.players[state.currentPlayerIndex];
   const bank = state.board.bank;
   
-  // [0-9] TAKE_3_DIFFERENT
+  // 计算当前玩家手中宝石总数
+  const currentGemCount = Object.values(player.gems).reduce((sum, count) => sum + count, 0);
+  const maxGems = 10;
+  const canTakeGems = currentGemCount < maxGems;
+  
+  // [0-9] TAKE_3_DIFFERENT - 只有在能拿至少1个宝石时才允许
   for (let i = 0; i < 10; i++) {
-    mask[i] = TAKE_3_COMBINATIONS[i].every(g => bank[g] > 0);
+    const availableCount = TAKE_3_COMBINATIONS[i].filter(g => bank[g] > 0).length;
+    mask[i] = canTakeGems && availableCount > 0 && TAKE_3_COMBINATIONS[i].every(g => bank[g] > 0);
   }
   
   // [10-14] TAKE_2_SAME
   for (let i = 0; i < 5; i++) {
-    mask[10 + i] = bank[TAKE_2_COLORS[i]] >= 4;
+    mask[10 + i] = canTakeGems && bank[TAKE_2_COLORS[i]] >= 4;
   }
   
   const visibleCards = [...state.board.level1, ...state.board.level2, ...state.board.level3];

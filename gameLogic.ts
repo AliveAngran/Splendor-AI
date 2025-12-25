@@ -1,5 +1,4 @@
-
-import { GameState, Card, Noble, GemType, Player, GemWallet, Action } from './types';
+import { GameState, Card, GemType, Player, Action } from './types';
 import { ALL_CARDS, ALL_NOBLES, INITIAL_BANK } from './constants';
 
 export const createInitialState = (mode: 'PvAI' | 'AIvAI', difficulty: 'SIMPLE' | 'NORMAL' | 'HARD'): GameState => {
@@ -78,6 +77,16 @@ export const canBuyCard = (player: Player, card: Card): boolean => {
   return player.gems.GOLD >= goldNeeded;
 };
 
+// 检查玩家是否满足贵族条件
+const checkNobleVisit = (player: Player, noble: { points: number; cost: Partial<Record<GemType, number>> }): boolean => {
+  for (const [gem, amt] of Object.entries(noble.cost)) {
+    if ((player.bonuses[gem as GemType] || 0) < (amt as number)) {
+      return false;
+    }
+  }
+  return true;
+};
+
 export const executeAction = (state: GameState, action: Action): GameState => {
   const nextState = JSON.parse(JSON.stringify(state)) as GameState;
   const player = nextState.players[nextState.currentPlayerIndex];
@@ -96,24 +105,44 @@ export const executeAction = (state: GameState, action: Action): GameState => {
     const isFewerDifferent = uniqueGems.size === gems.length && gems.length > 0 && gems.length < 3;
 
     if (isThreeDifferent || isTwoSame || isFewerDifferent) {
+      // 计算当前玩家手中宝石总数
+      const currentGemCount = Object.values(player.gems).reduce((sum, count) => sum + count, 0);
+      const maxGems = 10;
+      
       let actualTaken: GemType[] = [];
-      gems.forEach(g => {
-        if (bank[g] > 0) {
-          bank[g]--;
-          player.gems[g]++;
-          actualTaken.push(g);
-        }
+      let gemsToTake = gems.filter(g => bank[g] > 0);
+      
+      // 限制拿取数量，确保不超过10个
+      const canTake = Math.min(gemsToTake.length, maxGems - currentGemCount);
+      gemsToTake = gemsToTake.slice(0, canTake);
+      
+      gemsToTake.forEach(g => {
+        bank[g]--;
+        player.gems[g]++;
+        actualTaken.push(g);
       });
+      
       if (actualTaken.length > 0) {
         valid = true;
         logMessage = `${player.name} 拿取了 ${actualTaken.join('、')} 宝石。`;
+        if (canTake < gems.length) {
+          logMessage += ` (已达上限10个)`;
+        }
       }
     }
   } else if (action.type === 'BUY_CARD') {
-    const card = ALL_CARDS.find(c => c.id === action.cardId);
+    // 先检查卡牌是否存在于场上或预留区
+    const visibleCards = [...nextState.board.level1, ...nextState.board.level2, ...nextState.board.level3];
+    let card: Card | undefined;
+    
+    if (action.fromBoard) {
+      card = visibleCards.find(c => c.id === action.cardId);
+    } else {
+      card = player.reservedCards.find(c => c.id === action.cardId);
+    }
+    
     if (card && canBuyCard(player, card)) {
       // Logic for deducting costs
-      let goldSpent = 0;
       for (const gem of [GemType.WHITE, GemType.BLUE, GemType.GREEN, GemType.RED, GemType.BLACK]) {
         const cost = card.cost[gem] || 0;
         const bonus = player.bonuses[gem] || 0;
@@ -126,7 +155,6 @@ export const executeAction = (state: GameState, action: Action): GameState => {
         if (remainingNeeded > 0) {
           player.gems.GOLD -= remainingNeeded;
           bank.GOLD += remainingNeeded;
-          goldSpent += remainingNeeded;
         }
       }
 
@@ -140,7 +168,7 @@ export const executeAction = (state: GameState, action: Action): GameState => {
         const deckKey = `deck${card.level}` as 'deck1' | 'deck2' | 'deck3';
         const boardCards = nextState.board[levelKey];
         const deck = nextState.board[deckKey];
-        const index = boardCards.findIndex(c => c.id === card.id);
+        const index = boardCards.findIndex(c => c.id === card!.id);
         
         if (index !== -1) {
           if (deck.length > 0) {
@@ -153,48 +181,53 @@ export const executeAction = (state: GameState, action: Action): GameState => {
         }
       } else {
         // Bought from reserve
-        player.reservedCards = player.reservedCards.filter(c => c.id !== card.id);
+        player.reservedCards = player.reservedCards.filter(c => c.id !== card!.id);
       }
 
-      // Check nobles
-      nextState.board.nobles.forEach((noble, nIdx) => {
-        let satisfied = true;
-        for (const [gem, amt] of Object.entries(noble.cost)) {
-          if ((player.bonuses[gem as GemType] || 0) < (amt as number)) satisfied = false;
-        }
-        if (satisfied) {
+      // Check nobles - 每回合只能获得一个贵族
+      let nobleGained = false;
+      for (let i = 0; i < nextState.board.nobles.length && !nobleGained; i++) {
+        const noble = nextState.board.nobles[i];
+        if (checkNobleVisit(player, noble)) {
           player.score += noble.points;
-          nextState.board.nobles.splice(nIdx, 1);
+          nextState.board.nobles.splice(i, 1);
           logMessage += ` 获得贵族青睐！`;
+          nobleGained = true;
         }
-      });
+      }
 
       valid = true;
       logMessage = `${player.name} 购买了一张 ${card.level} 级 ${card.gemType} 卡牌。${logMessage}`;
     }
   } else if (action.type === 'RESERVE_CARD') {
     if (player.reservedCards.length < 3) {
-      const card = ALL_CARDS.find(c => c.id === action.cardId);
-      if (card) {
+      // 检查卡牌是否在场上
+      const levelKey = `level${action.level}` as 'level1' | 'level2' | 'level3';
+      const boardCards = nextState.board[levelKey];
+      const cardIndex = boardCards.findIndex(c => c.id === action.cardId);
+      
+      if (cardIndex !== -1) {
+        const card = boardCards[cardIndex];
         player.reservedCards.push(card);
-        if (bank.GOLD > 0) {
+        
+        // 计算当前玩家手中宝石总数
+        const currentGemCount = Object.values(player.gems).reduce((sum, count) => sum + count, 0);
+        const maxGems = 10;
+        
+        // 只有在未达上限且银行有黄金时才获得黄金
+        if (bank.GOLD > 0 && currentGemCount < maxGems) {
           bank.GOLD--;
           player.gems.GOLD++;
         }
         
         // Remove from board and replace from deck
-        const levelKey = `level${card.level}` as 'level1' | 'level2' | 'level3';
-        const deckKey = `deck${card.level}` as 'deck1' | 'deck2' | 'deck3';
-        const boardCards = nextState.board[levelKey];
+        const deckKey = `deck${action.level}` as 'deck1' | 'deck2' | 'deck3';
         const deck = nextState.board[deckKey];
-        const index = boardCards.findIndex(c => c.id === card.id);
         
-        if (index !== -1) {
-          if (deck.length > 0) {
-            boardCards[index] = deck.shift()!;
-          } else {
-            boardCards.splice(index, 1);
-          }
+        if (deck.length > 0) {
+          boardCards[cardIndex] = deck.shift()!;
+        } else {
+          boardCards.splice(cardIndex, 1);
         }
         
         valid = true;
@@ -205,13 +238,30 @@ export const executeAction = (state: GameState, action: Action): GameState => {
 
   if (valid) {
     nextState.logs.unshift(logMessage);
-    // Winner Check
-    if (player.score >= 15 && nextState.currentPlayerIndex === nextState.players.length - 1) {
-      const winner = nextState.players.reduce((prev, curr) => prev.score > curr.score ? prev : curr);
-      nextState.winner = winner.name;
-      nextState.phase = 'GAMEOVER';
+    
+    // 切换到下一个玩家
+    const nextPlayerIndex = (nextState.currentPlayerIndex + 1) % nextState.players.length;
+    nextState.currentPlayerIndex = nextPlayerIndex;
+    
+    // 胜利检查：当回合结束（回到第一个玩家）时，检查是否有人达到15分
+    if (nextPlayerIndex === 0) {
+      const playersOver15 = nextState.players.filter(p => p.score >= 15);
+      if (playersOver15.length > 0) {
+        // 找出分数最高的玩家
+        const maxScore = Math.max(...nextState.players.map(p => p.score));
+        const winners = nextState.players.filter(p => p.score === maxScore);
+        
+        if (winners.length === 1) {
+          nextState.winner = winners[0].name;
+        } else {
+          // 平分时，购买卡牌数少的获胜
+          const minCards = Math.min(...winners.map(p => p.purchasedCards.length));
+          const finalWinner = winners.find(p => p.purchasedCards.length === minCards);
+          nextState.winner = finalWinner ? finalWinner.name : winners[0].name;
+        }
+        nextState.phase = 'GAMEOVER';
+      }
     }
-    nextState.currentPlayerIndex = (nextState.currentPlayerIndex + 1) % nextState.players.length;
   }
 
   return nextState;
